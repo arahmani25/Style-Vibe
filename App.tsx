@@ -14,13 +14,12 @@ enum Tab {
   STUDIO = 'studio',
   EDA = 'eda',
   INVENTORY = 'inventory',
-
 }
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>(Tab.SEARCH);
   const [inventory, setInventory] = useState<Product[]>(INVENTORY);
-  const [collection, setCollection] = useState<Product[]>([]); // User's saved collection
+  const [collection, setCollection] = useState<Product[]>([]);
   const [loadingCache, setLoadingCache] = useState(true);
   const [loadingStatus, setLoadingStatus] = useState<string>('Initializing...');
 
@@ -28,7 +27,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const initData = async () => {
       try {
-        // First, try local cache
         setLoadingStatus('Checking local cache...');
         const cached = await loadInventoryFromCache();
         if (cached && cached.length > 0) {
@@ -38,7 +36,6 @@ const App: React.FC = () => {
           return;
         }
 
-        // If no cache, load from GitHub
         setLoadingStatus('Loading from GitHub...');
         console.log("No cache found, loading from GitHub...");
         const githubData = await loadInventoryFromGitHub();
@@ -51,7 +48,6 @@ const App: React.FC = () => {
       } catch (error) {
         console.error("Failed to load inventory:", error);
         setLoadingStatus('Using default data...');
-        // Keep using INVENTORY as fallback
       } finally {
         setLoadingCache(false);
       }
@@ -68,28 +64,23 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-chic-blush to-white transition-colors duration-500">
-      {/* Sticky Header - Chic & Minimal */}
-      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-pink-100 shadow-sm transition-all duration-300">
+      {/* Header */}
+      <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-pink-100 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-24">
-
-            {/* Custom SVG Logo */}
             <div className="flex items-center cursor-pointer group" onClick={() => setActiveTab(Tab.SEARCH)}>
               <svg width="200" height="40" viewBox="0 0 200 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="group-hover:scale-105 transition-transform duration-300">
                 <text x="0" y="32" fontFamily="Playfair Display, serif" fontSize="32" fontWeight="800" fill="#2D2D2D" letterSpacing="-0.02em">Style Vibe</text>
                 <circle cx="170" cy="12" r="4" fill="#E11D48" className="animate-pulse" />
-                <path d="M155 32 L185 32" stroke="#E11D48" strokeWidth="2" strokeLinecap="round" className="opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
               </svg>
             </div>
 
-            {/* Desktop Nav */}
             <nav className="hidden md:flex space-x-1 items-center">
               {[
                 { id: Tab.SEARCH, label: 'Discover' },
                 { id: Tab.STUDIO, label: 'Studio' },
                 { id: Tab.EDA, label: 'EDA' },
                 { id: Tab.INVENTORY, label: 'Inventory' },
-
               ].map((item) => (
                 <button
                   key={item.id}
@@ -106,8 +97,8 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Mobile Nav Strip */}
-        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-pink-100 py-3 px-6 flex justify-between items-center z-50 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        {/* Mobile Nav */}
+        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-pink-100 py-3 px-4 flex justify-between items-center z-50 shadow-lg">
           {[
             { id: Tab.SEARCH, icon: '✨', label: 'Discover' },
             { id: Tab.STUDIO, icon: '🎨', label: 'Studio' },
@@ -146,15 +137,12 @@ const App: React.FC = () => {
         <div className={activeTab === Tab.INVENTORY ? 'block animate-fade-in-up' : 'hidden'}>
           <InventoryManager currentInventory={inventory} onUpdateInventory={setInventory} />
         </div>
-
       </main>
 
       <footer className="hidden md:block bg-white border-t border-pink-100 py-10 mt-auto">
         <div className="max-w-7xl mx-auto px-6 text-center">
           <p className="font-serif text-2xl font-bold text-chic-dark mb-2 tracking-widest">STYLYST.</p>
-          <p className="text-chic-text text-sm">
-            The LLM-Powered Fashion Vibe Matcher
-          </p>
+          <p className="text-chic-text text-sm">The LLM-Powered Fashion Vibe Matcher</p>
         </div>
       </footer>
     </div>

@@ -5,19 +5,52 @@ import { STYLYST_SYSTEM_PROMPT } from "../constants";
 // Storage key for API key in localStorage
 const API_KEY_STORAGE_KEY = 'stylyst_gemini_api_key';
 
-// Hardcoded key for demo (can be regenerated after presentation)
-const DEMO_API_KEY = 'AIzaSyAjz01mWjhQu5uCg3ft41ZSc5867tXFZg8';
-
 const getAiClient = () => {
-  // Priority: 1. localStorage (user-entered), 2. Environment variable, 3. Demo key
+  // Get API key from localStorage (user-entered) or environment
   const storedKey = typeof window !== 'undefined' ? localStorage.getItem(API_KEY_STORAGE_KEY) : null;
-  const apiKey = storedKey || import.meta.env.VITE_GEMINI_API_KEY || DEMO_API_KEY;
+  const apiKey = storedKey || import.meta.env.VITE_GEMINI_API_KEY;
 
   if (!apiKey) {
-    console.error("CRITICAL: Gemini API Key is missing.");
+    console.error("No API key found. Please enter your Gemini API key in Settings.");
     throw new Error("MISSING_API_KEY");
   }
   return new GoogleGenAI({ apiKey });
+};
+
+// Retry helper with exponential backoff for rate limit errors
+const withRetry = async <T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 2000
+): Promise<T> => {
+  let lastError: any;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      const errorMessage = error?.message || error?.toString() || '';
+
+      // Check if it's a rate limit or overload error
+      const isRetryable =
+        errorMessage.includes('429') ||
+        errorMessage.includes('503') ||
+        errorMessage.includes('overloaded') ||
+        errorMessage.includes('UNAVAILABLE') ||
+        errorMessage.includes('rate limit');
+
+      if (isRetryable && attempt < maxRetries - 1) {
+        const delay = baseDelay * Math.pow(2, attempt); // 2s, 4s, 8s
+        console.log(`⏳ API overloaded. Retrying in ${delay / 1000}s... (Attempt ${attempt + 2}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else if (!isRetryable) {
+        throw error; // Don't retry non-rate-limit errors
+      }
+    }
+  }
+
+  throw lastError;
 };
 
 // Helper to convert file/blob to base64
@@ -194,42 +227,68 @@ export const getStylistRecommendations = async (
   `;
 
   try {
-    // --- STAGE 2 & 3: RANKING & GENERATION ---
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        systemInstruction: STYLYST_SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            user_query: { type: Type.STRING },
-            stylist_summary: { type: Type.STRING },
-            recommendations: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  rank: { type: Type.INTEGER },
-                  item_id: { type: Type.STRING },
-                  description: { type: Type.STRING },
-                  explanation: { type: Type.STRING }
-                },
-                required: ["rank", "item_id", "description", "explanation"]
+    // --- STAGE 2 & 3: RANKING & GENERATION (with retry) ---
+    const response = await withRetry(async () => {
+      return await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: STYLYST_SYSTEM_PROMPT,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              user_query: { type: Type.STRING },
+              stylist_summary: { type: Type.STRING },
+              recommendations: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    rank: { type: Type.INTEGER },
+                    item_id: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                    explanation: { type: Type.STRING }
+                  },
+                  required: ["rank", "item_id", "description", "explanation"]
+                }
               }
             }
           }
         }
-      }
-    });
+      });
+    }, 3, 2000); // 3 retries, starting with 2s delay
 
     if (response.text) {
       return JSON.parse(response.text) as RecommendationResponse;
     }
+    // If response.text is empty, it's an error, so it will be caught below.
     throw new Error("Empty response from Stylist");
-  } catch (error) {
+  } catch (error: any) {
+    // FALLBACK: If API fails (or no key), return local candidates
+    console.warn("⚠️ AI unavailable or failed. Falling back to local results.", error);
+
+    // Use the local candidates we found in Stage 1
+    const localResults = candidateItems.slice(0, 6).map((item, index) => ({
+      rank: index + 1,
+      item_id: item.id,
+      description: item.description.substring(0, 100) + "...",
+      explanation: "Matched based on product keywords."
+    }));
+
+    if (localResults.length > 0) {
+      return {
+        user_query: query,
+        stylist_summary: "Showing top results based on your keywords. (AI features are currently unavailable).",
+        recommendations: localResults
+      };
+    }
+
     console.error("Gemini API Error:", error);
+
+    if (error?.message?.includes('overloaded') || error?.message?.includes('503') || error?.message?.includes('429')) {
+      throw new Error("The AI is experiencing high demand. Please wait a moment and try again.");
+    }
     throw new Error("The stylist encountered an internal error. Please try a simpler query or refresh.");
   }
 };
@@ -267,7 +326,7 @@ export const analyzeImageWithAnnotations = async (imageFile: File): Promise<Anno
   `;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-2.0-flash',
     contents: {
       parts: [
         { inlineData: { mimeType: imageFile.type, data: base64Data } },
@@ -309,7 +368,7 @@ export const analyzeFashionImage = async (imageFile: File, promptText: string) =
   const base64Data = await fileToGenerativePart(imageFile);
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-2.0-flash',
     contents: {
       parts: [
         { inlineData: { mimeType: imageFile.type, data: base64Data } },
@@ -331,7 +390,7 @@ export const editFashionImage = async (imageFile: File, editPrompt: string): Pro
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.0-flash',
       contents: {
         parts: [
           {
@@ -373,7 +432,7 @@ export const getFashionTrends = async (query: string) => {
   const ai = getAiClient();
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-2.0-flash',
     contents: `Answer this fashion query using the latest data: ${query}`,
     config: {
       tools: [{ googleSearch: {} }],
